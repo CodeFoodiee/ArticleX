@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In — ArticleX</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="script.js"></script>
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-card">
+      <a href="index.html" class="auth-close" aria-label="Close">✕</a>
+      <a href="index.html" class="auth-logo">ArticleX</a>
+      <p class="auth-subtitle">Welcome back. Sign in to continue your story.</p>
+
+      <form id="login-form" onsubmit="handleEmailLogin(event)">
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input type="email" id="field-email" class="form-input"
+            placeholder="you@example.com" required autofocus>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <div style="position:relative">
+            <input type="password" id="field-password" class="form-input"
+              placeholder="Your password" required>
+            <button type="button" id="toggle-pass"
+              style="position:absolute;right:14px;top:50%;transform:translateY(-50%);
+                color:var(--text-muted);font-size:.95rem">👁</button>
+          </div>
+        </div>
+        <div style="text-align:right;margin-bottom:16px">
+          <a href="#" id="forgot-link"
+            style="font-size:.85rem;color:var(--accent)">Forgot password?</a>
+        </div>
+
+        <div id="error-msg" style="display:none;padding:12px 16px;background:#fef2f2;
+          border:1px solid #fecaca;border-radius:var(--radius);color:#dc2626;
+          font-size:.875rem;margin-bottom:16px"></div>
+
+        <button type="submit" class="btn btn-primary" id="login-btn"
+          style="width:100%;justify-content:center;padding:13px">
+          <span id="login-text">Sign In</span>
+        </button>
+      </form>
+
+      <div class="auth-divider">or</div>
+
+      <button class="btn btn-secondary" id="google-btn"
+        style="width:100%;justify-content:center;gap:10px;padding:12px">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+          style="width:20px;height:20px" alt="Google">
+        Continue with Google
+      </button>
+
+      <div class="auth-switch" style="margin-top:20px">
+        Don't have an account? <a href="signup.html">Create one free</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script>
+    // Redirect if already signed in
+    onAuthReady(user => {
+      if (user) {
+        const redirect = new URLSearchParams(location.search).get('redirect') || 'index.html';
+        window.location.href = redirect;
+      }
+    });
+
+    // Password visibility toggle
+    document.getElementById('toggle-pass').addEventListener('click', () => {
+      const f = document.getElementById('field-password');
+      f.type = f.type === 'password' ? 'text' : 'password';
+    });
+
+    // Forgot password
+    document.getElementById('forgot-link').addEventListener('click', async e => {
+      e.preventDefault();
+      const email = document.getElementById('field-email').value.trim();
+      if (!email) { Toast.error('Enter your email address first'); return; }
+      try {
+        await fbAuth().sendPasswordResetEmail(email);
+        Toast.success('Password reset email sent — check your inbox!');
+      } catch (err) {
+        Toast.error(fbErrMsg(err));
+      }
+    });
+
+    // Email / password sign-in
+    async function handleEmailLogin(e) {
+      e.preventDefault();
+      const email    = document.getElementById('field-email').value.trim();
+      const password = document.getElementById('field-password').value;
+      const btn      = document.getElementById('login-btn');
+      const errDiv   = document.getElementById('error-msg');
+
+      btn.disabled = true;
+      document.getElementById('login-text').textContent = 'Signing in…';
+      errDiv.style.display = 'none';
+
+      try {
+        await fbAuth().signInWithEmailAndPassword(email, password);
+        logAnalyticsEvent('login', { method: 'password' });
+        // onAuthReady will redirect
+      } catch (err) {
+        errDiv.textContent    = fbErrMsg(err);
+        errDiv.style.display  = 'block';
+        btn.disabled          = false;
+        document.getElementById('login-text').textContent = 'Sign In';
+      }
+    }
+
+    // Google sign-in
+    document.getElementById('google-btn').addEventListener('click', async () => {
+      try {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        await fbAuth().signInWithPopup(provider);
+        logAnalyticsEvent('login', { method: 'google' });
+        // onAuthReady handles redirect
+      } catch (err) {
+        Toast.error(fbErrMsg(err));
+      }
+    });
+
+    function fbErrMsg(err) {
+      const map = {
+        'auth/user-not-found':     'No account found with that email.',
+        'auth/wrong-password':     'Incorrect password.',
+        'auth/invalid-email':      'Please enter a valid email address.',
+        'auth/invalid-credential': 'Invalid email or password.',
+        'auth/too-many-requests':  'Too many attempts — try again later.',
+        'auth/user-disabled':      'This account has been disabled.',
+      };
+      return map[err.code] || err.message;
+    }
+  </script>
+</body>
+</html>

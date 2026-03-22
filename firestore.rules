@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ────────────────────────────────────
+    function isAuth()          { return request.auth != null; }
+    function isOwner(uid)      { return isAuth() && request.auth.uid == uid; }
+    function validString(f, min, max) {
+      return f is string && f.size() >= min && f.size() <= max;
+    }
+
+    // ── Users ───────────────────────────────────────────────
+    match /users/{uid} {
+      allow read: if true;
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid)
+        && (!('email' in request.resource.data)          // email is immutable
+            || request.resource.data.email == resource.data.email)
+        && validString(request.resource.data.username, 2, 30);
+      allow delete: if isOwner(uid);
+    }
+
+    // ── Articles ────────────────────────────────────────────
+    match /articles/{articleId} {
+      allow read: if true;
+
+      allow create: if isAuth()
+        && request.resource.data.authorId == request.auth.uid
+        && validString(request.resource.data.title,   1, 150)
+        && validString(request.resource.data.content, 50, 100000);
+
+      allow update: if isAuth() && (
+        // Author can edit content
+        (resource.data.authorId == request.auth.uid)
+        ||
+        // Any authenticated user can toggle their own like
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likeCount']))
+        ||
+        // Any authenticated user can increment views
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views']))
+      );
+
+      allow delete: if isAuth() && resource.data.authorId == request.auth.uid;
+
+      // ── Comments sub-collection ──────────────────────────
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isAuth()
+          && request.resource.data.authorId == request.auth.uid
+          && validString(request.resource.data.content, 1, 500);
+        allow delete: if isAuth() && resource.data.authorId == request.auth.uid;
+        allow update: if false; // comments are immutable
+      }
+    }
+  }
+}

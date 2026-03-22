@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Article — ArticleX</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="script.js"></script>
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  
+  <div id="article-container">
+    <div class="container-sm" style="padding-top:60px">
+      <div class="skeleton" style="height:14px;width:30%;border-radius:20px;margin-bottom:24px"></div>
+      <div class="skeleton" style="height:44px;width:90%;margin-bottom:10px"></div>
+      <div class="skeleton" style="height:44px;width:70%;margin-bottom:28px"></div>
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:48px">
+        <div class="skeleton" style="width:44px;height:44px;border-radius:50%"></div>
+        <div>
+          <div class="skeleton" style="height:14px;width:120px;margin-bottom:6px"></div>
+          <div class="skeleton" style="height:12px;width:80px;border-radius:20px"></div>
+        </div>
+      </div>
+      <div class="skeleton" style="height:320px;border-radius:var(--radius-lg);margin-bottom:40px"></div>
+      <div class="skeleton" style="height:14px;width:100%;margin-bottom:10px"></div>
+      <div class="skeleton" style="height:14px;width:95%;margin-bottom:10px"></div>
+      <div class="skeleton" style="height:14px;width:88%;margin-bottom:10px"></div>
+      <div class="skeleton" style="height:14px;width:92%;margin-bottom:10px"></div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script>
+    const articleId = new URLSearchParams(location.search).get('id');
+    let article = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if (!articleId) { window.location.href = 'index.html'; return; }
+      // Load article once auth state is known (needed for like/owner checks)
+      onAuthReady(() => loadArticle());
+    });
+
+    async function loadArticle() {
+      try {
+        article = await apiRequest(`/articles/${articleId}`);
+        document.title = `${article.title} — ArticleX`;
+        logAnalyticsEvent('view_article', {
+          article_id: articleId,
+          title: article.title || '',
+        });
+        renderArticle();
+      } catch (_) {
+        document.getElementById('article-container').innerHTML = `
+          <div class="container-sm" style="padding:80px 0;text-align:center">
+            <div style="font-size:3rem;margin-bottom:16px">😕</div>
+            <h2>Article not found</h2>
+            <p style="color:var(--text-secondary);margin:12px 0 24px">
+              This article may have been deleted or the link is invalid.
+            </p>
+            <a href="index.html" class="btn btn-primary">Back to Home</a>
+          </div>`;
+      }
+    }
+
+    function renderArticle() {
+      const fbUser  = fbAuth().currentUser;
+      const profile = Auth.getProfile();
+      const author  = article.author || {};
+      const isOwner = fbUser && profile &&
+        (profile.id === article.authorId || profile.uid === article.authorId);
+      const userLikes = article.likes || [];
+      const liked   = fbUser && userLikes.includes(fbUser.uid);
+      const date    = new Date(article.createdAt).toLocaleDateString('en-US',
+        { month: 'long', day: 'numeric', year: 'numeric' });
+      const tagsHtml = (article.tags || []).map(t =>
+        `<a href="index.html?tag=${encodeURIComponent(t)}" class="tag">${esc(t)}</a>`).join('');
+
+      document.getElementById('article-container').innerHTML = `
+        <div class="article-header">
+          <div class="container-sm">
+            <div class="article-header-meta">
+              ${tagsHtml || ''}
+              <span class="read-time">📖 ${article.readTime || 1} min read</span>
+              <span style="color:var(--text-muted);font-size:.8rem">👁 ${article.views || 0} views</span>
+            </div>
+            <h1 class="article-title">${esc(article.title)}</h1>
+            ${article.excerpt
+              ? `<p class="article-subtitle">${esc(article.excerpt)}</p>`
+              : ''}
+            <div class="article-author-row">
+              <div class="article-author-info">
+                <div class="avatar" style="width:44px;height:44px;font-size:1rem">
+                  ${author.avatar
+                    ? `<img src="${author.avatar}" alt="${esc(author.username)}">`
+                    : (author.username || 'U')[0].toUpperCase()}
+                </div>
+                <div class="author-details">
+                  <div class="name">${esc(author.username || 'Anonymous')}</div>
+                  <div class="meta">${date}</div>
+                </div>
+              </div>
+              <div class="article-actions">
+                <button class="action-btn ${liked ? 'liked' : ''}"
+                  id="like-btn" onclick="toggleLike()">
+                  ❤️ <span id="like-count">${article.likeCount || 0}</span>
+                </button>
+                <button class="action-btn" id="bookmark-btn" onclick="toggleBookmark()">
+                  🔖 Save
+                </button>
+                <button class="action-btn" onclick="shareArticle()">↗ Share</button>
+                ${isOwner ? `
+                  <a href="write.html?id=${article.id || article._id}" class="action-btn">
+                    ✏️ Edit
+                  </a>
+                  <button class="action-btn"
+                    style="border-color:#fecaca;color:#dc2626"
+                    onclick="confirmDelete()">
+                    🗑 Delete
+                  </button>` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="container-sm">
+          ${article.image
+            ? `<div class="article-hero-image">
+                <img src="${article.image}" alt="${esc(article.title)}">
+              </div>`
+            : ''}
+
+          <div class="article-body" id="article-body"></div>
+
+          ${article.tags?.length ? `
+            <div style="margin-top:48px;padding-top:32px;border-top:1px solid var(--border)">
+              <div style="font-size:.8rem;font-weight:700;text-transform:uppercase;
+                letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px">
+                Filed under
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">${tagsHtml}</div>
+            </div>` : ''}
+
+          
+          <div style="margin-top:48px;padding:28px;background:var(--bg-subtle);
+            border-radius:var(--radius-lg);border:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px">
+              <div class="avatar" style="width:56px;height:56px;font-size:1.3rem">
+                ${author.avatar
+                  ? `<img src="${author.avatar}" alt="${esc(author.username)}">`
+                  : (author.username || 'U')[0].toUpperCase()}
+              </div>
+              <div>
+                <div style="font-weight:700;font-size:1.1rem">
+                  ${esc(author.username || 'Anonymous')}
+                </div>
+                <div style="font-size:.85rem;color:var(--text-muted)">Author</div>
+              </div>
+            </div>
+            ${author.bio
+              ? `<p style="font-size:.9rem;color:var(--text-secondary);line-height:1.7">
+                  ${esc(author.bio)}
+                </p>`
+              : ''}
+          </div>
+
+          
+          <div class="comments-section">
+            <h3 class="comments-title">
+              💬 Responses
+              <span id="comment-count"
+                style="color:var(--text-muted);font-weight:400;font-size:.9em">
+                (${(article.comments || []).filter(c => !c.parentId).length})
+              </span>
+            </h3>
+
+            ${fbUser ? `
+              <div class="comment-form">
+                <div class="comment-input-row">
+                  <div class="avatar">
+                    ${(fbUser.displayName || fbUser.email || 'U')[0].toUpperCase()}
+                  </div>
+                  <div style="flex:1">
+                    <textarea id="comment-input"
+                      placeholder="Share your thoughts…"
+                      maxlength="500"></textarea>
+                    <div style="display:flex;justify-content:space-between;
+                      align-items:center;margin-top:10px">
+                      <span class="char-count" id="comment-char">0 / 500</span>
+                      <button class="btn btn-primary btn-sm" onclick="addComment()">
+                        Post response
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>` : `
+              <div style="padding:20px;background:var(--bg-subtle);
+                border:1px solid var(--border);border-radius:var(--radius);
+                margin-bottom:28px;text-align:center">
+                <a href="login.html" style="color:var(--accent);font-weight:600">Sign in</a>
+                <span style="color:var(--text-secondary)"> to leave a response</span>
+              </div>`}
+
+            <div class="comment-list" id="comments-list"></div>
+          </div>
+        </div>`;
+
+      // Render article body (supports HTML or plain text + markdown)
+      const bodyEl = document.getElementById('article-body');
+      if (article.content.includes('<') && article.content.includes('>')) {
+        bodyEl.innerHTML = article.content;
+      } else {
+        bodyEl.innerHTML = renderMarkdown(article.content);
+      }
+
+      renderComments();
+
+      document.getElementById('comment-input')?.addEventListener('input', e => {
+        document.getElementById('comment-char').textContent = `${e.target.value.length} / 500`;
+      });
+    }
+
+    function renderComments() {
+      const list    = document.getElementById('comments-list');
+      if (!list) return;
+      const profile = Auth.getProfile();
+      const allComments = article.comments || [];
+      const rootComments = allComments.filter(c => !c.parentId);
+      const repliesMap = {};
+      allComments.filter(c => c.parentId).forEach(r => {
+        if (!repliesMap[r.parentId]) repliesMap[r.parentId] = [];
+        repliesMap[r.parentId].push(r);
+      });
+
+      if (!rootComments.length) {
+        list.innerHTML = `
+          <div style="text-align:center;padding:32px;color:var(--text-muted)">
+            No responses yet. Be the first to share your thoughts!
+          </div>`;
+        return;
+      }
+
+      list.innerHTML = rootComments.map(c => {
+        const isOwner = profile &&
+          (c.authorId === profile.id || c.authorId === profile.uid);
+        const replies = repliesMap[c.id] || [];
+        const repliesHtml = replies.map(r => {
+          const canDeleteReply = profile &&
+            (r.authorId === profile.id || r.authorId === profile.uid);
+          return `
+            <div class="comment-item" style="margin-top:10px;background:var(--bg);padding:14px 16px">
+              <div class="avatar" style="width:30px;height:30px;font-size:.72rem;min-width:30px;padding:0">
+                ${(r.username || 'U')[0].toUpperCase()}
+              </div>
+              <div class="comment-body">
+                <div class="comment-header">
+                  <span class="comment-author">${esc(r.username || 'User')}</span>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <span class="comment-date">${timeAgo(r.createdAt)}</span>
+                    ${canDeleteReply ? `
+                      <button onclick="deleteComment('${r.id}')"
+                        style="color:var(--text-muted);font-size:.72rem;padding:2px 8px;border-radius:4px;background:var(--bg-subtle)">✕</button>` : ''}
+                  </div>
+                </div>
+                <p class="comment-text">${esc(r.content)}</p>
+              </div>
+            </div>`;
+        }).join('');
+        return `
+          <div class="comment-item">
+            <div class="avatar" style="width:36px;height:36px;font-size:.8rem;flex-shrink:0;min-width:36px;padding:0">
+              ${(c.username || 'U')[0].toUpperCase()}
+            </div>
+            <div class="comment-body">
+              <div class="comment-header">
+                <span class="comment-author">${esc(c.username || 'User')}</span>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span class="comment-date">${timeAgo(c.createdAt)}</span>
+                  ${isOwner ? `
+                    <button onclick="deleteComment('${c.id}')"
+                      style="color:var(--text-muted);font-size:.75rem;
+                        padding:2px 8px;border-radius:4px;
+                        background:var(--bg-subtle)">✕</button>` : ''}
+                </div>
+              </div>
+              <p class="comment-text">${esc(c.content)}</p>
+              <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+                <button class="btn btn-sm btn-secondary" onclick="toggleReplyBox('${c.id}')">Reply</button>
+                ${replies.length ? `<span class="comment-date">${replies.length} repl${replies.length===1?'y':'ies'}</span>` : ''}
+              </div>
+              <div id="reply-box-${c.id}" style="display:none;margin-top:10px">
+                <textarea id="reply-input-${c.id}" class="form-input"
+                  style="min-height:70px;padding:10px 12px;font-size:.86rem"
+                  maxlength="500" placeholder="Write a reply..."></textarea>
+                <div style="display:flex;justify-content:flex-end;margin-top:8px">
+                  <button class="btn btn-primary btn-sm" onclick="addReply('${c.id}')">Post reply</button>
+                </div>
+              </div>
+              ${repliesHtml ? `<div style="margin-top:10px;border-left:2px solid var(--border);padding-left:12px">${repliesHtml}</div>` : ''}
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function toggleReplyBox(commentId) {
+      const el = document.getElementById(`reply-box-${commentId}`);
+      if (!el) return;
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+
+    async function toggleLike() {
+      if (!requireAuth()) return;
+      try {
+        const data = await apiRequest(
+          `/articles/${articleId}/like`, { method: 'POST' });
+        document.getElementById('like-count').textContent = data.likeCount;
+        document.getElementById('like-btn').classList.toggle('liked', data.liked);
+        if (data.liked) Toast.success('Added to liked articles');
+      } catch (err) { Toast.error(err.message); }
+    }
+
+    async function toggleBookmark() {
+      if (!requireAuth()) return;
+      try {
+        const data = await apiRequest(
+          `/articles/${articleId}/bookmark`, { method: 'POST' });
+        const btn = document.getElementById('bookmark-btn');
+        btn.textContent = data.bookmarked ? '🔖 Saved!' : '🔖 Save';
+        btn.classList.toggle('bookmarked', data.bookmarked);
+        Toast.success(data.bookmarked ? 'Bookmarked!' : 'Bookmark removed');
+      } catch (err) { Toast.error(err.message); }
+    }
+
+    function shareArticle() {
+      if (navigator.share) {
+        navigator.share({ title: article.title, url: location.href });
+      } else {
+        navigator.clipboard.writeText(location.href);
+        Toast.success('Link copied to clipboard!');
+      }
+    }
+
+    function renderMarkdown(md) {
+      return (md || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        .replace(/!\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<p><img src="$2" alt="$1" style="max-width:100%;border-radius:12px;margin:12px 0"></p>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`{3}([\s\S]*?)`{3}/g, '<pre><code>$1</code></pre>')
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+        .split('\n').filter(l => l.trim())
+        .map(l => l.match(/^<[h|u|b|l|p|c]/) ? l : `<p>${l}</p>`).join('');
+    }
+
+    async function addComment() {
+      const input   = document.getElementById('comment-input');
+      const content = input?.value.trim();
+      if (!content) return Toast.error('Please write a comment first');
+      try {
+        const comment = await apiRequest(
+          `/articles/${articleId}/comments`,
+          { method: 'POST', body: JSON.stringify({ content }) }
+        );
+        if (!article.comments) article.comments = [];
+        article.comments.push(comment);
+        renderComments();
+        input.value = '';
+        document.getElementById('comment-char').textContent = '0 / 500';
+        document.getElementById('comment-count').textContent =
+          `(${article.comments.filter(c => !c.parentId).length})`;
+        Toast.success('Response posted!');
+      } catch (err) { Toast.error(err.message); }
+    }
+
+    async function deleteComment(commentId) {
+      try {
+        await apiRequest(
+          `/articles/${articleId}/comments/${commentId}`,
+          { method: 'DELETE' }
+        );
+        article.comments = article.comments.filter(c => c.id !== commentId && c.parentId !== commentId);
+        renderComments();
+        document.getElementById('comment-count').textContent =
+          `(${article.comments.filter(c => !c.parentId).length})`;
+        Toast.success('Comment deleted');
+      } catch (err) { Toast.error(err.message); }
+    }
+
+    async function addReply(commentId) {
+      if (!requireAuth()) return;
+      const input = document.getElementById(`reply-input-${commentId}`);
+      const content = input?.value.trim();
+      if (!content) return Toast.error('Please write a reply first');
+      try {
+        const reply = await apiRequest(
+          `/articles/${articleId}/comments/${commentId}/replies`,
+          { method: 'POST', body: JSON.stringify({ content }) }
+        );
+        if (!article.comments) article.comments = [];
+        article.comments.push(reply);
+        renderComments();
+        Toast.success('Reply posted!');
+      } catch (err) {
+        Toast.error(err.message);
+      }
+    }
+
+    function confirmDelete() {
+      showModal(
+        'Delete article?',
+        'This action cannot be undone. The article will be permanently removed.',
+        async () => {
+          try {
+            await apiRequest(`/articles/${articleId}`, { method: 'DELETE' });
+            Toast.success('Article deleted');
+            setTimeout(() => window.location.href = 'index.html', 1000);
+          } catch (err) { Toast.error(err.message); }
+        }
+      );
+    }
+  </script>
+</body>
+</html>

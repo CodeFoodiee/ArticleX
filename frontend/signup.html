@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign Up — ArticleX</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="script.js"></script>
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-card">
+      <a href="index.html" class="auth-close" aria-label="Close">✕</a>
+      <a href="index.html" class="auth-logo">ArticleX</a>
+      <p class="auth-subtitle">Join thousands of writers. Start your story today.</p>
+
+      <form id="signup-form" onsubmit="handleSignup(event)">
+        <div class="form-group">
+          <label class="form-label">Display Name</label>
+          <input type="text" id="field-username" class="form-input"
+            placeholder="Jane Smith" minlength="2" maxlength="30" required autofocus>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input type="email" id="field-email" class="form-input"
+            placeholder="you@example.com" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <div style="position:relative">
+            <input type="password" id="field-password" class="form-input"
+              placeholder="At least 6 characters" minlength="6" required>
+            <button type="button" id="toggle-pass"
+              style="position:absolute;right:14px;top:50%;transform:translateY(-50%);
+                color:var(--text-muted);font-size:.95rem">👁</button>
+          </div>
+          
+          <div style="margin-top:8px">
+            <div style="display:flex;gap:4px;margin-bottom:4px">
+              <div style="height:3px;flex:1;border-radius:2px;background:var(--border)" id="sb1"></div>
+              <div style="height:3px;flex:1;border-radius:2px;background:var(--border)" id="sb2"></div>
+              <div style="height:3px;flex:1;border-radius:2px;background:var(--border)" id="sb3"></div>
+              <div style="height:3px;flex:1;border-radius:2px;background:var(--border)" id="sb4"></div>
+            </div>
+            <span id="strength-text" style="font-size:.75rem;color:var(--text-muted)"></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            Short Bio
+            <span style="color:var(--text-muted);font-weight:400">(optional)</span>
+          </label>
+          <input type="text" id="field-bio" class="form-input"
+            placeholder="Tell readers a little about yourself…" maxlength="200">
+        </div>
+
+        <div id="error-msg" style="display:none;padding:12px 16px;background:#fef2f2;
+          border:1px solid #fecaca;border-radius:var(--radius);color:#dc2626;
+          font-size:.875rem;margin-bottom:16px"></div>
+
+        <button type="submit" class="btn btn-primary" id="signup-btn"
+          style="width:100%;justify-content:center;padding:13px">
+          <span id="signup-text">Create Account</span>
+        </button>
+      </form>
+
+      <div class="auth-divider">or</div>
+
+      <button class="btn btn-secondary" id="google-btn"
+        style="width:100%;justify-content:center;gap:10px;padding:12px">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+          style="width:20px;height:20px" alt="Google">
+        Sign up with Google
+      </button>
+
+      <div class="auth-switch" style="margin-top:20px">
+        Already have an account? <a href="login.html">Sign in</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script>
+    // Redirect if already signed in
+    onAuthReady(user => { if (user) window.location.href = 'index.html'; });
+
+    // Password visibility
+    document.getElementById('toggle-pass').addEventListener('click', () => {
+      const f = document.getElementById('field-password');
+      f.type = f.type === 'password' ? 'text' : 'password';
+    });
+
+    // Password strength
+    document.getElementById('field-password').addEventListener('input', e => {
+      const v = e.target.value;
+      let score = 0;
+      if (v.length >= 6)  score++;
+      if (v.length >= 10) score++;
+      if (/[A-Z]/.test(v) && /[a-z]/.test(v)) score++;
+      if (/[0-9!@#$%^&*]/.test(v)) score++;
+      const colors = ['', '#ef4444', '#f97316', '#eab308', '#22c55e'];
+      const labels = ['', 'Weak', 'Fair', 'Good', 'Strong'];
+      for (let i = 1; i <= 4; i++)
+        document.getElementById(`sb${i}`).style.background =
+          i <= score ? colors[score] : 'var(--border)';
+      const st = document.getElementById('strength-text');
+      st.textContent = v ? labels[score] : '';
+      st.style.color = colors[score] || 'var(--text-muted)';
+    });
+
+    async function handleSignup(e) {
+      e.preventDefault();
+      const username = document.getElementById('field-username').value.trim();
+      const email    = document.getElementById('field-email').value.trim();
+      const password = document.getElementById('field-password').value;
+      const bio      = document.getElementById('field-bio').value.trim();
+      const btn      = document.getElementById('signup-btn');
+      const errDiv   = document.getElementById('error-msg');
+
+      btn.disabled = true;
+      document.getElementById('signup-text').textContent = 'Creating account…';
+      errDiv.style.display = 'none';
+
+      try {
+        // 1. Create Firebase Auth user
+        const cred = await fbAuth().createUserWithEmailAndPassword(email, password);
+
+        // 2. Set display name in Firebase Auth
+        await cred.user.updateProfile({ displayName: username });
+
+        // 3. Lazy-create + update Mongo profile via Cloud Function
+        const profile = await apiRequest('/auth/me');
+        if (username || bio) {
+          await apiRequest('/auth/me', {
+            method: 'PUT',
+            body: JSON.stringify({ username, bio }),
+          });
+        }
+        Auth.setProfile({ ...profile, username, bio });
+        logAnalyticsEvent('sign_up', { method: 'password' });
+
+        Toast.success(`Welcome to ArticleX, ${username}!`);
+        setTimeout(() => window.location.href = 'index.html', 800);
+      } catch (err) {
+        errDiv.textContent    = fbErrMsg(err);
+        errDiv.style.display  = 'block';
+        btn.disabled          = false;
+        document.getElementById('signup-text').textContent = 'Create Account';
+      }
+    }
+
+    document.getElementById('google-btn').addEventListener('click', async () => {
+      try {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        await fbAuth().signInWithPopup(provider);
+        logAnalyticsEvent('sign_up', { method: 'google' });
+        // Profile is lazy-created by the Cloud Function middleware
+        window.location.href = 'index.html';
+      } catch (err) {
+        Toast.error(fbErrMsg(err));
+      }
+    });
+
+    function fbErrMsg(err) {
+      const map = {
+        'auth/email-already-in-use': 'That email is already registered.',
+        'auth/invalid-email':        'Please enter a valid email address.',
+        'auth/weak-password':        'Password must be at least 6 characters.',
+        'auth/operation-not-allowed':'Email sign-up is not enabled.',
+      };
+      return map[err.code] || err.message;
+    }
+  </script>
+</body>
+</html>

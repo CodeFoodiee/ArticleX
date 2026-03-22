@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile — ArticleX</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .avatar-upload-ring {
+      position: relative; display: inline-block; cursor: pointer;
+    }
+    .avatar-upload-overlay {
+      position: absolute; inset: 0; border-radius: 50%;
+      background: rgba(26,22,18,.55);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: var(--transition);
+      font-size: .75rem; font-weight: 700; color: #fff;
+      flex-direction: column; gap: 4px;
+    }
+    .avatar-upload-ring:hover .avatar-upload-overlay { opacity: 1; }
+    .avatar-upload-ring input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; border-radius: 50%;
+    }
+  </style>
+  
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="script.js"></script>
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <div id="profile-container">
+    
+    <div style="background:var(--gradient-hero);padding:64px 0 48px">
+      <div class="container">
+        <div style="display:flex;align-items:center;gap:24px">
+          <div class="skeleton" style="width:100px;height:100px;border-radius:50%;flex-shrink:0"></div>
+          <div style="flex:1">
+            <div class="skeleton" style="height:32px;width:200px;margin-bottom:12px"></div>
+            <div class="skeleton" style="height:16px;width:320px;border-radius:20px;margin-bottom:10px"></div>
+            <div class="skeleton" style="height:14px;width:160px;border-radius:20px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="container section">
+      <div class="articles-grid">
+        ${Array(3).fill(0).map(() => `
+          <div class="article-card" style="pointer-events:none">
+            <div class="card-image"><div class="skeleton" style="width:100%;height:180px"></div></div>
+            <div class="card-body">
+              <div class="skeleton" style="height:20px;width:80%;margin-bottom:12px"></div>
+              <div class="skeleton" style="height:14px;width:95%;margin-bottom:8px"></div>
+              <div class="skeleton" style="height:14px;width:70%"></div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  
+  <script>
+    const viewUserId = new URLSearchParams(location.search).get('id');
+
+    document.addEventListener('DOMContentLoaded', () => {
+      onAuthReady(async fbUser => {
+        if (!viewUserId && !fbUser) {
+          window.location.href = 'login.html';
+          return;
+        }
+        await loadProfile(fbUser);
+      });
+    });
+
+    // ── Load profile data ─────────────────────────────────
+    async function loadProfile(fbUser) {
+      try {
+        const myProfile   = Auth.getProfile();
+        const isOwnProfile = !viewUserId ||
+          (fbUser && (myProfile?.id === viewUserId || myProfile?.uid === viewUserId));
+
+        let mongoUser;
+        if (isOwnProfile && fbUser) {
+          mongoUser = await apiRequest('/auth/me');
+          Auth.setProfile(mongoUser);
+        } else {
+          // Derive basic info from their public articles
+          const data = await apiRequest(`/articles?authorId=${viewUserId}&limit=1`);
+          mongoUser  = data.articles[0]?.author || { id: viewUserId, username: 'Writer', bio: '', avatar: '' };
+        }
+
+        const userId      = mongoUser.id || mongoUser.uid || viewUserId;
+        const articlesData = await apiRequest(`/articles?authorId=${userId}&limit=50`);
+        const articles     = articlesData.articles;
+
+        document.title = `${mongoUser.username} — ArticleX`;
+        renderProfile(mongoUser, articles, isOwnProfile, fbUser);
+      } catch (err) {
+        document.getElementById('profile-container').innerHTML = `
+          <div class="container" style="padding:80px 0;text-align:center">
+            <div style="font-size:3rem;margin-bottom:16px">😕</div>
+            <h2>Profile not found</h2>
+            <p style="color:var(--text-secondary);margin:12px 0 24px">${esc(err.message)}</p>
+            <a href="index.html" class="btn btn-primary">Back to Home</a>
+          </div>`;
+      }
+    }
+
+    // ── Render full profile page ──────────────────────────
+    function renderProfile(user, articles, isOwnProfile, fbUser) {
+      const initials   = (user.username || 'U')[0].toUpperCase();
+      const joinDate   = user.createdAt
+        ? new Date(user.createdAt).toLocaleDateString('en-US', { month:'long', year:'numeric' })
+        : '';
+      const totalLikes = articles.reduce((s, a) => s + (a.likeCount || a.likes?.length || 0), 0);
+      const totalViews = articles.reduce((s, a) => s + (a.views || 0), 0);
+
+      document.getElementById('profile-container').innerHTML = `
+
+        
+        <div class="profile-header">
+          <div class="container">
+            <div class="profile-header-inner">
+
+              
+              <div>
+                ${isOwnProfile ? `
+                  <div class="avatar-upload-ring" title="Change avatar">
+                    <div class="profile-avatar-lg" id="profile-avatar-display">
+                      ${user.avatar ? `<img src="${user.avatar}" alt="${esc(user.username)}">` : initials}
+                    </div>
+                    <div class="avatar-upload-overlay">
+                      <span style="font-size:1.2rem">📷</span>
+                      <span>Change</span>
+                    </div>
+                    <input type="file" id="avatar-file-input" accept="image/*"
+                      onchange="uploadAvatar(event)">
+                  </div>` : `
+                  <div class="profile-avatar-lg">
+                    ${user.avatar ? `<img src="${user.avatar}" alt="${esc(user.username)}">` : initials}
+                  </div>`}
+              </div>
+
+              <div class="profile-info">
+                <h1 class="profile-username">${esc(user.username || 'Anonymous')}</h1>
+                <p class="profile-bio">
+                  ${user.bio ? esc(user.bio) : '<em style="opacity:.5">No bio yet.</em>'}
+                </p>
+                ${joinDate ? `<p style="font-size:.8rem;color:#7a6f65;margin-bottom:16px">
+                  Member since ${joinDate}</p>` : ''}
+                <div class="profile-stats">
+                  <div>
+                    <div class="profile-stat-value">${articles.length}</div>
+                    <div class="profile-stat-label">Articles</div>
+                  </div>
+                  <div>
+                    <div class="profile-stat-value">${totalLikes}</div>
+                    <div class="profile-stat-label">Likes</div>
+                  </div>
+                  <div>
+                    <div class="profile-stat-value">${totalViews}</div>
+                    <div class="profile-stat-label">Views</div>
+                  </div>
+                </div>
+              </div>
+
+              ${isOwnProfile ? `
+                <div style="display:flex;flex-direction:column;gap:10px;align-self:flex-start">
+                  <button class="btn btn-secondary" onclick="openEditModal()"
+                    style="border-color:rgba(240,237,232,.2);color:#f0ede8;
+                      background:rgba(240,237,232,.1)">
+                    ✏️ Edit Profile
+                  </button>
+                  <button class="btn btn-secondary btn-sm" onclick="sendPasswordReset()"
+                    style="border-color:rgba(240,237,232,.12);color:#9a9080;
+                      background:transparent;font-size:.78rem">
+                    🔑 Reset Password
+                  </button>
+                </div>` : ''}
+            </div>
+          </div>
+        </div>
+
+        
+        <div style="border-bottom:1px solid var(--border)">
+          <div class="container">
+            <div style="display:flex">
+              <button id="tab-btn-articles" onclick="switchTab('articles')"
+                style="padding:16px 24px;font-weight:600;font-size:.9rem;background:none;
+                  border-bottom:2px solid var(--accent);color:var(--accent);
+                  transition:var(--transition);cursor:pointer">
+                📝 Articles (${articles.length})
+              </button>
+              ${isOwnProfile ? `
+                <button id="tab-btn-bookmarks" onclick="switchTab('bookmarks')"
+                  style="padding:16px 24px;font-weight:600;font-size:.9rem;background:none;
+                    border-bottom:2px solid transparent;color:var(--text-muted);
+                    transition:var(--transition);cursor:pointer">
+                  🔖 Bookmarks
+                </button>` : ''}
+            </div>
+          </div>
+        </div>
+
+        
+        <div class="section" id="tab-articles">
+          <div class="container">
+            ${articles.length === 0 ? `
+              <div class="empty-state">
+                <div class="empty-icon">✍️</div>
+                <h3 class="empty-title">${isOwnProfile ? "You haven't written anything yet" : 'No articles yet'}</h3>
+                <p class="empty-text">${isOwnProfile
+                  ? 'Share your first story with the world.'
+                  : 'This writer hasn\'t published anything yet.'}</p>
+                ${isOwnProfile
+                  ? `<a href="write.html" class="btn btn-primary">Write your first article</a>`
+                  : ''}
+              </div>`
+              : `<div class="articles-grid">${articles.map(renderArticleCard).join('')}</div>`
+            }
+          </div>
+        </div>
+
+        
+        ${isOwnProfile ? `
+          <div class="section" id="tab-bookmarks" style="display:none">
+            <div class="container" id="bookmarks-content">
+              <div class="loader"></div>
+            </div>
+          </div>` : ''}
+
+        
+        ${isOwnProfile ? `
+          <div class="modal-overlay" id="edit-modal">
+            <div class="modal" style="max-width:500px">
+              <h3 class="modal-title" style="margin-bottom:24px">✏️ Edit Profile</h3>
+
+              <div class="form-group">
+                <label class="form-label">Display Name</label>
+                <input type="text" id="edit-username" class="form-input"
+                  value="${esc(user.username || '')}" maxlength="30"
+                  placeholder="Your display name">
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Bio</label>
+                <textarea id="edit-bio" class="form-input" style="min-height:90px"
+                  maxlength="200"
+                  placeholder="Tell readers a little about yourself…">${esc(user.bio || '')}</textarea>
+                <div class="char-count" id="bio-count">${(user.bio || '').length} / 200</div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Avatar URL
+                  <span style="color:var(--text-muted);font-weight:400">
+                    (or click the photo above to upload)
+                  </span>
+                </label>
+                <input type="url" id="edit-avatar-url" class="form-input"
+                  value="${esc(user.avatar || '')}"
+                  placeholder="https://…">
+              </div>
+
+              <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+                <button class="btn btn-primary" id="save-btn" onclick="saveProfile()">
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>` : ''}
+      `;
+
+      // Wire bio counter
+      document.getElementById('edit-bio')?.addEventListener('input', e => {
+        document.getElementById('bio-count').textContent = `${e.target.value.length} / 200`;
+      });
+
+      // Close modal on backdrop click
+      document.getElementById('edit-modal')?.addEventListener('click', e => {
+        if (e.target.id === 'edit-modal') closeEditModal();
+      });
+    }
+
+    // ── Avatar upload via Firebase Storage ───────────────
+    async function uploadAvatar(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { Toast.error('Avatar must be under 2 MB'); return; }
+
+      Toast.info('Uploading avatar…');
+      try {
+        const user  = fbAuth().currentUser;
+        const ext   = file.name.split('.').pop();
+        const path  = `avatars/${user.uid}/avatar.${ext}`;
+        const ref   = fbStorage().ref(path);
+        const snap  = await ref.put(file);
+        const url   = await snap.ref.getDownloadURL();
+
+        // Update Firestore profile + Firebase Auth display picture
+        await Promise.all([
+          apiRequest('/auth/me', { method:'PUT', body: JSON.stringify({ avatar: url }) }),
+          user.updateProfile({ photoURL: url }),
+        ]);
+
+        // Update avatar in DOM immediately
+        const display = document.getElementById('profile-avatar-display');
+        if (display) display.innerHTML = `<img src="${url}" alt="avatar">`;
+
+        // Refresh cache
+        const profile = Auth.getProfile();
+        Auth.setProfile({ ...profile, avatar: url });
+
+        Toast.success('Avatar updated!');
+      } catch (err) {
+        Toast.error('Upload failed: ' + err.message);
+      }
+    }
+
+    // ── Tab switching ─────────────────────────────────────
+    function switchTab(tab) {
+      ['articles', 'bookmarks'].forEach(t => {
+        const panel = document.getElementById(`tab-${t}`);
+        const btn   = document.getElementById(`tab-btn-${t}`);
+        if (panel) panel.style.display = t === tab ? '' : 'none';
+        if (btn) {
+          btn.style.borderBottomColor = t === tab ? 'var(--accent)' : 'transparent';
+          btn.style.color             = t === tab ? 'var(--accent)' : 'var(--text-muted)';
+        }
+      });
+      if (tab === 'bookmarks') loadBookmarks();
+    }
+
+    // ── Bookmarks ─────────────────────────────────────────
+    async function loadBookmarks() {
+      const container = document.getElementById('bookmarks-content');
+      try {
+        const user = await apiRequest('/auth/me');
+        const ids  = user.bookmarks || [];
+
+        if (!ids.length) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">🔖</div>
+              <h3 class="empty-title">No bookmarks yet</h3>
+              <p class="empty-text">Save articles you want to read later.</p>
+              <a href="index.html" class="btn btn-primary">Discover articles</a>
+            </div>`;
+          return;
+        }
+
+        const results = await Promise.allSettled(
+          ids.slice(0, 24).map(id => apiRequest(`/articles/${id}`))
+        );
+        const valid = results
+          .filter(r => r.status === 'fulfilled')
+          .map(r => r.value);
+
+        container.innerHTML = valid.length
+          ? `<div class="articles-grid">${valid.map(renderArticleCard).join('')}</div>`
+          : `<div class="empty-state">
+               <div class="empty-icon">🔖</div>
+               <h3 class="empty-title">Bookmarks unavailable</h3>
+             </div>`;
+      } catch (err) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">⚠️</div>
+            <h3 class="empty-title">Failed to load bookmarks</h3>
+            <p class="empty-text">${esc(err.message)}</p>
+            <button class="btn btn-primary" onclick="loadBookmarks()">Retry</button>
+          </div>`;
+      }
+    }
+
+    // ── Edit Profile Modal ────────────────────────────────
+    function openEditModal()  { document.getElementById('edit-modal')?.classList.add('open'); }
+    function closeEditModal() { document.getElementById('edit-modal')?.classList.remove('open'); }
+
+    async function saveProfile() {
+      const username = document.getElementById('edit-username')?.value.trim();
+      const bio      = document.getElementById('edit-bio')?.value.trim();
+      const avatar   = document.getElementById('edit-avatar-url')?.value.trim();
+      const btn      = document.getElementById('save-btn');
+
+      if (username && (username.length < 2 || username.length > 30)) {
+        Toast.error('Username must be 2–30 characters');
+        return;
+      }
+
+      btn.disabled    = true;
+      btn.textContent = 'Saving…';
+
+      try {
+        const updated = await apiRequest('/auth/me', {
+          method: 'PUT',
+          body: JSON.stringify({ username, bio, avatar }),
+        });
+
+        // Sync Firebase Auth display name
+        const fbUser = fbAuth().currentUser;
+        const updates = {};
+        if (username && username !== fbUser?.displayName) updates.displayName = username;
+        if (avatar   && avatar   !== fbUser?.photoURL)    updates.photoURL    = avatar;
+        if (Object.keys(updates).length) await fbUser.updateProfile(updates);
+
+        Auth.setProfile({ ...Auth.getProfile(), ...updated });
+        Toast.success('Profile saved!');
+        closeEditModal();
+        setTimeout(() => location.reload(), 700);
+      } catch (err) {
+        Toast.error(err.message);
+        btn.disabled    = false;
+        btn.textContent = 'Save Changes';
+      }
+    }
+
+    // ── Password reset ────────────────────────────────────
+    async function sendPasswordReset() {
+      const fbUser = fbAuth().currentUser;
+      if (!fbUser?.email) { Toast.error('No email on this account'); return; }
+      try {
+        await fbAuth().sendPasswordResetEmail(fbUser.email);
+        Toast.success(`Reset email sent to ${fbUser.email}`);
+      } catch (err) {
+        Toast.error(err.message);
+      }
+    }
+  </script>
+</body>
+</html>
